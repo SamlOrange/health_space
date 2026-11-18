@@ -53,7 +53,7 @@ for (const [index, article] of candidates.entries()) {
   const titleZh = await translate(originalTitle, article.language) || previous?.titleZh || originalTitle;
   const summarySource = selectSummary(description);
   const translatedSummary = summarySource ? await translate(summarySource, article.language) : '';
-  const summaryZh = isUsefulSummary(translatedSummary, titleZh) ? translatedSummary : isUsefulSummary(previous?.summaryZh, titleZh) ? previous.summaryZh : '原文未提供可用简介；请点击原文查看详情。';
+  const summaryZh = previous?.summaryReviewed === true && isUsefulSummary(previous.summaryZh) ? previous.summaryZh : isUsefulSummary(translatedSummary, titleZh) ? translatedSummary : isUsefulSummary(previous?.summaryZh, titleZh) ? previous.summaryZh : '原文未提供可用简介；请点击原文查看详情。';
   articles.push({
     id: index + 1,
     title: originalTitle,
@@ -64,6 +64,7 @@ for (const [index, article] of candidates.entries()) {
     emoji: ['🌍', '🧬', '🩺', '🧪', '💉'][index % 5],
     summary: `来源：${article.domain || article.sourcecountry || '国际媒体'} · ${article.language || '多语种新闻'}`,
     summaryZh,
+    summaryReviewed: previous?.summaryReviewed === true,
     url: article.url || null,
     image: article.socialimage || null,
     language: article.language || '',
