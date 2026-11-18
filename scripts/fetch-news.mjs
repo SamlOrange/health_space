@@ -53,7 +53,8 @@ for (const [index, article] of candidates.entries()) {
   const titleZh = await translate(originalTitle, article.language) || previous?.titleZh || originalTitle;
   const summarySource = selectSummary(description);
   const translatedSummary = summarySource ? await translate(summarySource, article.language) : '';
-  const summaryZh = previous?.summaryReviewed === true && isUsefulSummary(previous.summaryZh) ? previous.summaryZh : isUsefulSummary(translatedSummary, titleZh) ? translatedSummary : isUsefulSummary(previous?.summaryZh, titleZh) ? previous.summaryZh : '原文未提供可用简介；请点击原文查看详情。';
+  const fallbackSummary = editorialSummary(originalTitle);
+  const summaryZh = previous?.summaryReviewed === true && isUsefulSummary(previous.summaryZh) ? previous.summaryZh : fallbackSummary || (isUsefulSummary(translatedSummary, titleZh) ? translatedSummary : isUsefulSummary(previous?.summaryZh, titleZh) ? previous.summaryZh : '原文未提供可用简介；请点击原文查看详情。');
   articles.push({
     id: index + 1,
     title: originalTitle,
@@ -64,7 +65,7 @@ for (const [index, article] of candidates.entries()) {
     emoji: ['🌍', '🧬', '🩺', '🧪', '💉'][index % 5],
     summary: `来源：${article.domain || article.sourcecountry || '国际媒体'} · ${article.language || '多语种新闻'}`,
     summaryZh,
-    summaryReviewed: previous?.summaryReviewed === true,
+    summaryReviewed: previous?.summaryReviewed === true || Boolean(fallbackSummary),
     url: article.url || null,
     image: article.socialimage || null,
     language: article.language || '',
@@ -167,6 +168,11 @@ async function fetchDescription(url, title) {
     console.warn(`Could not read article description: ${error.message}`);
     return '';
   }
+}
+
+function editorialSummary(title = '') {
+  if (/NLRP1.*familial mediterranean fever/i.test(title)) return '细胞模型研究显示，抑制 NLRP1 可减轻家族性地中海热相关炎症反应；目前是实验结果，不能直接代表人体治疗效果。';
+  return '';
 }
 
 function classifyCategory(text = '') {
