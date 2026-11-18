@@ -1,0 +1,23 @@
+import React, { useEffect, useState } from 'react';
+import { createRoot } from 'react-dom/client';
+import { ArrowDownUp, ArrowUpRight, Clock3, HeartPulse, Info, Search, ShieldCheck, Sparkles } from 'lucide-react';
+import './style.css';
+
+const demo = [];
+function App(){
+  const [videos,setVideos]=useState(demo), [meta,setMeta]=useState({updatedAt:null,source:'loading'}), [query,setQuery]=useState(''), [sort,setSort]=useState(false);
+  useEffect(()=>{fetch(`${import.meta.env.BASE_URL}videos.json`).then(r=>{if(!r.ok)throw new Error('加载失败');return r.json()}).then(d=>{setVideos(d.videos||[]);setMeta(d.meta||{})}).catch(()=>setMeta({source:'error',error:'新闻快照暂不可用'}))},[]);
+  const filtered=videos.filter(v=>(v.title+' '+v.category+' '+v.creator).toLowerCase().includes(query.toLowerCase())).sort((a,b)=>a.id-b.id);
+  return <main className="shell">
+    <nav><a className="brand" href="#"><span className="brand-icon"><HeartPulse size={20}/></span>脉知 <i>HEALTH PULSE</i></a><div className="nav-right"><span className="live"><b/>公开新闻快照</span></div></nav>
+    <section className="hero"><div className="hero-copy"><div className="eyebrow"><Sparkles size={14}/> GLOBAL HEALTH NEWS · TOP 10</div><h1>全球健康资讯，<em>每日精选。</em></h1><p>从全球新闻来源精选医疗健康报道，帮你在信息洪流里，<br className="desktop"/>用几分钟找到可靠、有用的健康知识。</p><div className="hero-meta"><span><Clock3 size={15}/> 每日快照</span><span className="dot-sep">·</span><span>全球最新资讯</span><span className="dot-sep">·</span><span>精选 TOP 10</span></div></div><div className="hero-art"><div className="orbit orbit1"/><div className="orbit orbit2"/><div className="pulse-card"><HeartPulse size={60} strokeWidth={1.3}/><span>健康<br/>有数</span></div><div className="float-tag tag-a">✦ 科学阅读</div><div className="float-tag tag-b">GLOBAL</div><div className="float-tag tag-c">♡ 身心健康</div></div></section>
+    <section className="section-head"><div><div className="section-kicker">THE WEEKLY EDITION <span/></div><h2>全球医疗健康热榜</h2><p className="sub">按全球媒体报道趋势与相关度整理，点击查看新闻原文</p></div><div className="list-tools"><label className="search"><Search size={16}/><input placeholder="搜索新闻或来源" value={query} onChange={e=>setQuery(e.target.value)}/></label><span className="sort"><ArrowDownUp size={15}/> GDELT 趋势排序</span></div></section>
+    <section className="list">{filtered.map((v,i)=><article className="video" key={v.id}><div className={'rank '+(i<3?'top':'')}>{String(i+1).padStart(2,'0')}</div><div className="thumb">{v.image?<img src={v.image} alt=""/>:<span>{v.emoji||'🌍'}</span>}<div className="play">↗</div><small>全球新闻</small></div><div className="video-body"><div className="chips"><span>{v.category}</span><small>{v.age}</small></div><h3>{v.title}</h3><div className="creator"><span className="avatar">{(v.creator||'健').slice(0,1)}</span><b>{v.creator||'健康创作者'}</b><span className="verified"><ShieldCheck size={13}/> 新闻来源</span></div><div className="summary">{v.summary}</div></div><div className="stats"><div><strong>{v.language||'NEWS'}</strong><small>{v.age}</small></div><a href={v.url||'#'} target={v.url?'_blank':undefined} rel="noreferrer" className="open">阅读原文 <ArrowUpRight size={15}/></a></div></article>)}{!filtered.length&&<div className="empty">没有找到相关报道，试试其他关键词。</div>}</section>
+    <div className="note"><Info size={16}/><span>{meta.notice||'新闻内容来自公开报道，请点击原文核对上下文。本站不提供医疗诊断或治疗建议。'}{meta.updatedAt&&` 最近更新：${new Date(meta.updatedAt).toLocaleString('zh-CN')}`}</span></div>
+    <footer><span>脉知 · HEALTH PULSE</span><span>来自全球媒体的医疗健康最新消息。</span></footer>
+    {meta.source==='error'&&<div className="demo"><span>暂时无法更新</span>{meta.error}</div>}
+  </main>
+}
+function parseLikes(x){return Number(String(x||'').replace(/[^\d.]/g,''))}
+
+createRoot(document.getElementById('root')).render(<App/>);
