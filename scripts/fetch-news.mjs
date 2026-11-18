@@ -38,7 +38,7 @@ const previousSnapshot = JSON.parse(await fs.readFile(snapshotPath, 'utf8').catc
 const previousByUrl = new Map((previousSnapshot.videos || []).map((item) => [item.url, item]));
 const seen = new Set();
 const candidates = (payload.articles || []).filter((article) => {
-  const key = (article.title || '').toLowerCase().replace(/[^a-z0-9\u4e00-\u9fff]/g, '').slice(0, 70);
+  const key = (article.title || '').toLowerCase().replace(/[^a-z0-9\u4e00-\u9fff]/g, '').slice(0, feed === 'google-news-rss' ? 48 : 70);
   if (!key || seen.has(key)) return false;
   seen.add(key);
   return true;
