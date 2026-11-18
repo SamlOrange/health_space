@@ -48,7 +48,7 @@ if (!candidates.length) throw new Error('GDELT returned no diabetes, blood sugar
 const articles = [];
 for (const [index, article] of candidates.entries()) {
   const originalTitle = clean(article.title || 'Untitled health news');
-  const description = article.url ? await fetchDescription(article.url, originalTitle) : '';
+  const description = article.rssDescription || (feed === 'gdelt' && article.url ? await fetchDescription(article.url, originalTitle) : '');
   const previous = previousByUrl.get(article.url);
   const titleZh = await translate(originalTitle, article.language) || previous?.titleZh || originalTitle;
   const summarySource = selectSummary(description);
@@ -77,7 +77,7 @@ const snapshot = {
   meta: {
     source: feed,
     updatedAt: new Date().toISOString(),
-    notice: '每日更新近7天全球控糖、糖尿病、抗炎与代谢健康报道；中文标题与摘要经机器翻译整理，内容以原文为准，不构成医疗建议。按 GDELT 趋势/相关度排序。',
+    notice: `每日更新近7天全球控糖、糖尿病、抗炎与代谢健康报道；中文标题与摘要经机器翻译整理，内容以原文为准，不构成医疗建议。${feed === 'gdelt' ? '按 GDELT 趋势/相关度排序。' : '按报道时间整理。'}`,
   },
 };
 await fs.writeFile(snapshotPath, JSON.stringify(snapshot, null, 2));
@@ -112,11 +112,11 @@ async function fetchGoogleNews() {
         const sourceTag = item.match(/<source\b([^>]*)>([\s\S]*?)<\/source>/i);
         const sourceName = sourceTag ? clean(sourceTag[2]) : '';
         const sourceUrl = sourceTag?.[1]?.match(/url=["']([^"']+)["']/i)?.[1] || '';
-        const topic = /(diabet|prediabet|blood sugar|blood glucose|glucose|insulin|glyc[ae]mi|glycation|sugar|inflamm|cytokin|metabol)/i;
+        const topic = /(diabet|prediabet|blood sugar|blood glucose|glucose|insulin|glyc[ae]mi|glycation|sugar|inflamm|cytokin)/i;
         if (!title || !link || !topic.test(title)) continue;
         let domain = sourceName || 'Google News';
         try { if (sourceUrl) domain = new URL(sourceUrl).hostname.replace(/^www\./, ''); } catch {}
-        articles.push({ title, url: link, domain, language: 'English', seendate: published });
+        articles.push({ title, url: link, domain, language: 'English', seendate: published, rssDescription: readTag('description') });
       }
       await delay(250);
     } catch (error) {
@@ -180,7 +180,7 @@ function scoreParagraph(text, terms) {
   return terms.reduce((score, term) => score + (lower.includes(term) ? 1 : 0), 0);
 }
 function isUsefulSummary(value) {
-  if (!value) return false;
+  if (!value || /comprehensive latest news|latest news coverage.*aggregated by google|news coverage.*from around the world/i.test(value)) return false;
   return [...value].filter((char) => /[\u3400-\u9fffA-Za-z0-9]/.test(char)).length >= 24;
 }
 
