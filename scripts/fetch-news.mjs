@@ -1,8 +1,8 @@
 import fs from 'node:fs/promises';
 
 const snapshotPath = new URL('../public/videos.json', import.meta.url);
-const query = '(health OR healthcare OR medical OR medicine OR disease OR hospital OR vaccine OR cancer OR WHO OR public health)';
-const params = new URLSearchParams({ query, mode: 'ArtList', format: 'json', maxrecords: '75', timespan: '1d', sort: 'HybridRel' });
+const query = '(diabetes OR diabetic OR prediabetes OR "blood sugar" OR "blood glucose" OR glycemic OR glycaemic OR glucose OR insulin OR "insulin resistance" OR glycation OR glycosylation OR "added sugar" OR "sugar reduction" OR "sugar intake" OR "sugar-sweetened beverages" OR "glycemic control" OR inflammation OR inflammatory OR "anti-inflammatory" OR "anti inflammatory" OR cytokine OR metabolic)';
+const params = new URLSearchParams({ query, mode: 'ArtList', format: 'json', maxrecords: '250', timespan: '7d', sort: 'HybridRel' });
 let payload;
 let lastError;
 for (let attempt = 1; attempt <= 3; attempt++) {
@@ -36,8 +36,8 @@ const candidates = (payload.articles || []).filter((article) => {
   if (!key || seen.has(key)) return false;
   seen.add(key);
   return true;
-}).slice(0, 10);
-if (!candidates.length) throw new Error('GDELT returned no health news; refusing to publish an empty snapshot.');
+}).slice(0, 20);
+if (!candidates.length) throw new Error('GDELT returned no diabetes, blood sugar, or inflammation news; refusing to publish an empty snapshot.');
 
 const articles = [];
 for (const [index, article] of candidates.entries()) {
@@ -52,7 +52,7 @@ for (const [index, article] of candidates.entries()) {
     id: index + 1,
     title: originalTitle,
     titleZh: titleZh || originalTitle,
-    category: '全球健康',
+    category: classifyCategory(`${originalTitle} ${description}`),
     creator: article.domain || article.sourcecountry || '新闻来源',
     age: formatAge(article.seendate),
     emoji: ['🌍', '🧬', '🩺', '🧪', '💉'][index % 5],
@@ -71,11 +71,11 @@ const snapshot = {
   meta: {
     source: 'gdelt',
     updatedAt: new Date().toISOString(),
-    notice: '中文标题由机器翻译；摘要依据新闻页面简介翻译整理。内容以原文为准，不构成医疗建议。热度按 GDELT 趋势/相关度排序。',
+    notice: '每日更新近7天全球控糖、糖尿病、抗炎与代谢健康报道；中文标题与摘要经机器翻译整理，内容以原文为准，不构成医疗建议。按 GDELT 趋势/相关度排序。',
   },
 };
 await fs.writeFile(snapshotPath, JSON.stringify(snapshot, null, 2));
-console.log(`Saved ${articles.length} stories with Chinese titles and summaries.`);
+console.log(`Saved ${articles.length} diabetes, blood sugar, and inflammation stories with Chinese titles and summaries.`);
 
 async function fetchDescription(url, title) {
   try {
@@ -107,10 +107,17 @@ async function fetchDescription(url, title) {
   }
 }
 
+function classifyCategory(text = '') {
+  const value = text.toLowerCase();
+  if (/diabet|prediabet|\bglucose\b|\bglycemic\b|\bglycaemic\b|\binsulin\b|blood sugar|blood glucose/.test(value)) return '糖尿病与血糖';
+  if (/inflamm|cytokine|anti-inflammatory|anti inflammatory/.test(value)) return '炎症研究';
+  return '控糖与代谢';
+}
+
 function selectSummary(text) {
   const normalized = clean(text);
   if (!normalized) return '';
-  const shortened = normalized.slice(0, 220);
+  const shortened = normalized.slice(0, 170);
   return shortened.length < normalized.length ? shortened.replace(/\s+\S*$/, '').trim() : shortened;
 }
 function scoreParagraph(text, terms) {
