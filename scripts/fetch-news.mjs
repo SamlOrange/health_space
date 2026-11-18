@@ -98,29 +98,29 @@ async function fetchGoogleNews() {
       url.searchParams.set('gl', 'US');
       url.searchParams.set('ceid', 'US:en');
       const response = await fetch(url, { headers: { 'User-Agent': 'Mozilla/5.0 (compatible; HealthPulseNews/1.0)' }, signal: AbortSignal.timeout(20000) });
-      if (!response.ok) throw new Error(`Google News RSS returned HTTP ${response.status}`);
+      if (!response.ok) throw new Error('Google News RSS returned HTTP ' + response.status);
       const xml = await response.text();
-      for (const match of xml.matchAll(/<item\\b[^>]*>([\\s\\S]*?)<\\/item>/gi)) {
+      for (const match of xml.matchAll(/<item\b[^>]*>([\s\S]*?)<\/item>/gi)) {
         const item = match[1];
         const readTag = (name) => {
-          const found = item.match(new RegExp(`<${name}\\b[^>]*>([\\s\\S]*?)<\\/${name}>`, 'i'));
-          return found ? clean(found[1].replace(/<!\\[CDATA\\[([\\s\\S]*?)\\]\\]>/g, '$1')) : '';
+          const found = item.match(new RegExp('<' + name + '\\b[^>]*>([\\s\\S]*?)</' + name + '>', 'i'));
+          return found ? clean(found[1].replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g, '$1')) : '';
         };
         const title = readTag('title');
         const link = readTag('link');
         const published = readTag('pubDate');
-        const sourceTag = item.match(/<source\\b([^>]*)>([\\s\\S]*?)<\\/source>/i);
+        const sourceTag = item.match(/<source\b([^>]*)>([\s\S]*?)<\/source>/i);
         const sourceName = sourceTag ? clean(sourceTag[2]) : '';
         const sourceUrl = sourceTag?.[1]?.match(/url=["']([^"']+)["']/i)?.[1] || '';
         const topic = /(diabet|prediabet|blood sugar|blood glucose|glucose|insulin|glyc[ae]mi|glycation|sugar|inflamm|cytokin|metabol)/i;
         if (!title || !link || !topic.test(title)) continue;
         let domain = sourceName || 'Google News';
-        try { if (sourceUrl) domain = new URL(sourceUrl).hostname.replace(/^www\\./, ''); } catch {}
+        try { if (sourceUrl) domain = new URL(sourceUrl).hostname.replace(/^www\./, ''); } catch {}
         articles.push({ title, url: link, domain, language: 'English', seendate: published });
       }
       await delay(250);
     } catch (error) {
-      console.warn(`Google News RSS query failed: ${error.message}`);
+      console.warn('Google News RSS query failed: ' + error.message);
     }
   }
   const seen = new Set();
