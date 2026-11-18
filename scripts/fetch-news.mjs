@@ -53,7 +53,7 @@ for (const [index, article] of candidates.entries()) {
   const titleZh = await translate(originalTitle, article.language) || previous?.titleZh || originalTitle;
   const summarySource = selectSummary(description);
   const translatedSummary = summarySource ? await translate(summarySource, article.language) : '';
-  const summaryZh = isUsefulSummary(translatedSummary) ? translatedSummary : isUsefulSummary(previous?.summaryZh) ? previous.summaryZh : '原文简介过短或暂不可用；请点击原文查看详情。';
+  const summaryZh = isUsefulSummary(translatedSummary, titleZh) ? translatedSummary : isUsefulSummary(previous?.summaryZh, titleZh) ? previous.summaryZh : '原文未提供可用简介；请点击原文查看详情。';
   articles.push({
     id: index + 1,
     title: originalTitle,
@@ -106,11 +106,17 @@ async function fetchGoogleNews() {
           const found = item.match(new RegExp('<' + name + '\\b[^>]*>([\\s\\S]*?)</' + name + '>', 'i'));
           return found ? clean(found[1].replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g, '$1')) : '';
         };
-        const title = readTag('title');
+        let title = readTag('title');
         const link = readTag('link');
         const published = readTag('pubDate');
         const sourceTag = item.match(/<source\b([^>]*)>([\s\S]*?)<\/source>/i);
         const sourceName = sourceTag ? clean(sourceTag[2]) : '';
+        if (sourceName) {
+          for (const separator of [' - ', ' – ', ' — ']) {
+            const suffix = separator + sourceName;
+            if (title.toLowerCase().endsWith(suffix.toLowerCase())) title = title.slice(0, -suffix.length).trim();
+          }
+        }
         const sourceUrl = sourceTag?.[1]?.match(/url=["']([^"']+)["']/i)?.[1] || '';
         const topic = /(diabet|prediabet|blood sugar|blood glucose|glucose|insulin|glyc[ae]mi|glycation|sugar|inflamm|cytokin)/i;
         if (!title || !link || !topic.test(title)) continue;
@@ -179,8 +185,12 @@ function scoreParagraph(text, terms) {
   const lower = text.toLowerCase();
   return terms.reduce((score, term) => score + (lower.includes(term) ? 1 : 0), 0);
 }
-function isUsefulSummary(value) {
-  if (!value || /comprehensive latest news|latest news coverage.*aggregated by google|news coverage.*from around the world/i.test(value)) return false;
+function isUsefulSummary(value, title = '') {
+  if (!value || /comprehensive latest news|latest news coverage.*aggregated by google|news coverage.*from around the world|由\s*Google\s*新闻从世界各地|由\s*Google\s*新闻从世界各地/i.test(value)) return false;
+  const compact = value.toLowerCase().replace(/[^\u3400-\u9fffA-Za-z0-9]/g, '');
+  const headline = title.toLowerCase().replace(/[^\u3400-\u9fffA-Za-z0-9]/g, '');
+  const commonLead = headline.slice(0, Math.min(24, headline.length));
+  if (commonLead.length >= 16 && compact.includes(commonLead)) return false;
   return [...value].filter((char) => /[\u3400-\u9fffA-Za-z0-9]/.test(char)).length >= 24;
 }
 
