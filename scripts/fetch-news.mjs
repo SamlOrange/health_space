@@ -42,11 +42,12 @@ if (!candidates.length) throw new Error('GDELT returned no health news; refusing
 const articles = [];
 for (const [index, article] of candidates.entries()) {
   const originalTitle = clean(article.title || 'Untitled health news');
-  const description = article.url ? await fetchDescription(article.url) : '';
+  const description = article.url ? await fetchDescription(article.url, originalTitle) : '';
   const previous = previousByUrl.get(article.url);
   const titleZh = await translate(originalTitle, article.language) || previous?.titleZh || originalTitle;
   const summarySource = selectSummary(description);
-  const summaryZh = (summarySource ? await translate(summarySource, article.language) : '') || previous?.summaryZh || '暂未获取到报道简介；请点击原文查看详情。';
+  const translatedSummary = summarySource ? await translate(summarySource, article.language) : '';
+  const summaryZh = isUsefulSummary(translatedSummary) ? translatedSummary : isUsefulSummary(previous?.summaryZh) ? previous.summaryZh : '原文简介过短或暂不可用；请点击原文查看详情。';
   articles.push({
     id: index + 1,
     title: originalTitle,
@@ -76,7 +77,7 @@ const snapshot = {
 await fs.writeFile(snapshotPath, JSON.stringify(snapshot, null, 2));
 console.log(`Saved ${articles.length} stories with Chinese titles and summaries.`);
 
-async function fetchDescription(url) {
+async function fetchDescription(url, title) {
   try {
     const response = await fetch(url, {
       headers: { 'User-Agent': 'Mozilla/5.0 (compatible; HealthPulseNews/1.0)', Accept: 'text/html' },
@@ -91,7 +92,15 @@ async function fetchDescription(url) {
       const key = (attrs.property || attrs.name || attrs.itemprop || '').toLowerCase();
       if (['og:description', 'description', 'twitter:description'].includes(key) && attrs.content) descriptions.set(key, attrs.content);
     }
-    return descriptions.get('og:description') || descriptions.get('description') || descriptions.get('twitter:description') || '';
+    const metaDescription = descriptions.get('og:description') || descriptions.get('description') || descriptions.get('twitter:description') || '';
+    if (metaDescription.length >= 90) return metaDescription;
+    const body = [...html.matchAll(/<p\b[^>]*>([\s\S]*?)<\/p>/gi)]
+      .map((match) => clean(match[1]))
+      .filter((text) => text.length >= 90 && text.length <= 2000 && text.split(/\s+/).length >= 14)
+      .filter((text) => !/subscribe|newsletter|sign up|read more|click here|cookie policy/i.test(text));
+    const titleTerms = clean(title).toLowerCase().split(/[^a-z0-9]+/).filter((word) => word.length > 4);
+    body.sort((a, b) => scoreParagraph(b, titleTerms) - scoreParagraph(a, titleTerms));
+    return body[0] || metaDescription;
   } catch (error) {
     console.warn(`Could not read article description: ${error.message}`);
     return '';
@@ -101,8 +110,16 @@ async function fetchDescription(url) {
 function selectSummary(text) {
   const normalized = clean(text);
   if (!normalized) return '';
-  const firstSentences = normalized.match(/^.{1,220}?(?:[.!?。！？](?=\s|$)|$)/s)?.[0] || normalized.slice(0, 220);
-  return firstSentences.slice(0, 220).trim();
+  const shortened = normalized.slice(0, 220);
+  return shortened.length < normalized.length ? shortened.replace(/\s+\S*$/, '').trim() : shortened;
+}
+function scoreParagraph(text, terms) {
+  const lower = text.toLowerCase();
+  return terms.reduce((score, term) => score + (lower.includes(term) ? 1 : 0), 0);
+}
+function isUsefulSummary(value) {
+  if (!value) return false;
+  return [...value].filter((char) => /[\u3400-\u9fffA-Za-z0-9]/.test(char)).length >= 24;
 }
 
 async function translate(text, languageName) {
