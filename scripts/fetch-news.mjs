@@ -9,11 +9,31 @@ const params = new URLSearchParams({
   timespan: '1d',
   sort: 'HybridRel',
 });
-const response = await fetch(`https://api.gdeltproject.org/api/v2/doc/doc?${params}`, {
-  headers: { 'User-Agent': 'HealthPulseNews/1.0 (static daily news digest)' },
-});
-if (!response.ok) throw new Error(`GDELT returned HTTP ${response.status}`);
-const payload = await response.json();
+let payload;
+let lastError;
+for (let attempt = 1; attempt <= 3; attempt++) {
+  try {
+    const response = await fetch(`https://api.gdeltproject.org/api/v2/doc/doc?${params}`, {
+      headers: { 'User-Agent': 'HealthPulseNews/1.0 (static daily news digest)' },
+      signal: AbortSignal.timeout(30000),
+    });
+    if (!response.ok) throw new Error(`GDELT returned HTTP ${response.status}`);
+    payload = await response.json();
+    break;
+  } catch (error) {
+    lastError = error;
+    console.warn(`GDELT attempt ${attempt}/3 failed: ${error.message}`);
+    if (attempt < 3) await new Promise((resolve) => setTimeout(resolve, attempt * 4000));
+  }
+}
+const snapshotPath = new URL('../public/videos.json', import.meta.url);
+if (!payload) {
+  const previous = JSON.parse(await fs.readFile(snapshotPath, 'utf8'));
+  previous.meta = { ...previous.meta, lastCheckedAt: new Date().toISOString() };
+  await fs.writeFile(snapshotPath, JSON.stringify(previous, null, 2));
+  console.warn(`Keeping the previous ${previous.videos?.length || 0}-story snapshot: ${lastError?.message || 'news source unavailable'}`);
+  process.exit(0);
+}
 const seen = new Set();
 const articles = (payload.articles || []).filter((article) => {
   const key = (article.title || '').toLowerCase().replace(/[^a-z0-9\u4e00-\u9fff]/g, '').slice(0, 70);
@@ -41,7 +61,7 @@ const snapshot = {
     notice: '按 GDELT 相关度/趋势排序；不是跨平台统一阅读量榜单。',
   },
 };
-await fs.writeFile(new URL('../public/videos.json', import.meta.url), JSON.stringify(snapshot, null, 2));
+await fs.writeFile(snapshotPath, JSON.stringify(snapshot, null, 2));
 console.log(`Saved ${articles.length} news stories.`);
 
 function formatAge(value) {
