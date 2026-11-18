@@ -20,11 +20,17 @@ for (let attempt = 1; attempt <= 3; attempt++) {
     if (attempt < 3) await delay(attempt * 4000);
   }
 }
-if (!payload) {
+let feed = 'gdelt';
+if (!payload || !(payload.articles || []).length) {
+  console.warn(`GDELT unavailable; trying Google News RSS: ${lastError?.message || 'no matching articles'}`);
+  payload = await fetchGoogleNews();
+  feed = 'google-news-rss';
+}
+if (!payload || !(payload.articles || []).length) {
   const previous = JSON.parse(await fs.readFile(snapshotPath, 'utf8'));
   previous.meta = { ...previous.meta, lastCheckedAt: new Date().toISOString() };
   await fs.writeFile(snapshotPath, JSON.stringify(previous, null, 2));
-  console.warn(`Keeping previous snapshot: ${lastError?.message || 'news source unavailable'}`);
+  console.warn('Keeping previous snapshot: both news sources unavailable.');
   process.exit(0);
 }
 
@@ -69,13 +75,62 @@ for (const [index, article] of candidates.entries()) {
 const snapshot = {
   videos: articles,
   meta: {
-    source: 'gdelt',
+    source: feed,
     updatedAt: new Date().toISOString(),
     notice: '每日更新近7天全球控糖、糖尿病、抗炎与代谢健康报道；中文标题与摘要经机器翻译整理，内容以原文为准，不构成医疗建议。按 GDELT 趋势/相关度排序。',
   },
 };
 await fs.writeFile(snapshotPath, JSON.stringify(snapshot, null, 2));
 console.log(`Saved ${articles.length} diabetes, blood sugar, and inflammation stories with Chinese titles and summaries.`);
+
+async function fetchGoogleNews() {
+  const searches = [
+    'diabetes OR diabetic OR prediabetes OR "blood sugar" OR "blood glucose" OR glucose OR insulin when:7d',
+    'inflammation OR inflammatory OR "anti-inflammatory" OR cytokine when:7d',
+    'glycation OR "added sugar" OR "sugar intake" OR glycemic OR glycaemic when:7d',
+  ];
+  const articles = [];
+  for (const term of searches) {
+    try {
+      const url = new URL('https://news.google.com/rss/search');
+      url.searchParams.set('q', term);
+      url.searchParams.set('hl', 'en-US');
+      url.searchParams.set('gl', 'US');
+      url.searchParams.set('ceid', 'US:en');
+      const response = await fetch(url, { headers: { 'User-Agent': 'Mozilla/5.0 (compatible; HealthPulseNews/1.0)' }, signal: AbortSignal.timeout(20000) });
+      if (!response.ok) throw new Error(`Google News RSS returned HTTP ${response.status}`);
+      const xml = await response.text();
+      for (const match of xml.matchAll(/<item\\b[^>]*>([\\s\\S]*?)<\\/item>/gi)) {
+        const item = match[1];
+        const readTag = (name) => {
+          const found = item.match(new RegExp(`<${name}\\b[^>]*>([\\s\\S]*?)<\\/${name}>`, 'i'));
+          return found ? clean(found[1].replace(/<!\\[CDATA\\[([\\s\\S]*?)\\]\\]>/g, '$1')) : '';
+        };
+        const title = readTag('title');
+        const link = readTag('link');
+        const published = readTag('pubDate');
+        const sourceTag = item.match(/<source\\b([^>]*)>([\\s\\S]*?)<\\/source>/i);
+        const sourceName = sourceTag ? clean(sourceTag[2]) : '';
+        const sourceUrl = sourceTag?.[1]?.match(/url=["']([^"']+)["']/i)?.[1] || '';
+        const topic = /(diabet|prediabet|blood sugar|blood glucose|glucose|insulin|glyc[ae]mi|glycation|sugar|inflamm|cytokin|metabol)/i;
+        if (!title || !link || !topic.test(title)) continue;
+        let domain = sourceName || 'Google News';
+        try { if (sourceUrl) domain = new URL(sourceUrl).hostname.replace(/^www\\./, ''); } catch {}
+        articles.push({ title, url: link, domain, language: 'English', seendate: published });
+      }
+      await delay(250);
+    } catch (error) {
+      console.warn(`Google News RSS query failed: ${error.message}`);
+    }
+  }
+  const seen = new Set();
+  return { articles: articles.filter((article) => {
+    const key = article.title.toLowerCase().replace(/[^a-z0-9]/g, '').slice(0, 70);
+    if (!key || seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  }).sort((a, b) => new Date(b.seendate).getTime() - new Date(a.seendate).getTime()) };
+}
 
 async function fetchDescription(url, title) {
   try {
