@@ -65,7 +65,8 @@ for (const article of candidates) {
   const summarySource = selectSummary(description);
   const translatedSummary = summarySource ? await translate(summarySource, article.language) : '';
   const fallbackSummary = editorialSummary(originalTitle);
-  const summaryZh = previous?.summaryReviewed === true && isSubstantiveSummary(previous.summaryZh) ? previous.summaryZh : fallbackSummary || (isSubstantiveSummary(translatedSummary) ? translatedSummary : isSubstantiveSummary(previous?.summaryZh) ? previous.summaryZh : '');
+  const aiSummary = process.env.OPENAI_API_KEY ? await summarizeArticle(articleContent.articleText || description, originalTitle) : '';
+  const summaryZh = previous?.summaryReviewed === true && isSubstantiveSummary(previous.summaryZh) ? previous.summaryZh : fallbackSummary || (isSubstantiveSummary(aiSummary) ? aiSummary : isSubstantiveSummary(translatedSummary) ? translatedSummary : isSubstantiveSummary(previous?.summaryZh) ? previous.summaryZh : '');
   if (!summaryZh) {
     console.warn(`Skipping story without a substantive article summary: ${originalTitle}`);
     continue;
@@ -295,7 +296,7 @@ async function fetchArticleContent(articleUrl, title, sourceDomain = '') {
     }
 
     const bodySummary = extractiveSummary(paragraphs, title);
-    if (bodySummary) return { url, summary: bodySummary };
+    if (bodySummary) return { url, summary: bodySummary, articleText: paragraphs.slice(0, 12).join('\n').slice(0, 14000) };
 
     const descriptions = new Map();
     for (const match of html.matchAll(/<meta\b[^>]*>/gi)) {
@@ -305,7 +306,7 @@ async function fetchArticleContent(articleUrl, title, sourceDomain = '') {
       if (['og:description', 'description', 'twitter:description'].includes(key) && attrs.content) descriptions.set(key, attrs.content);
     }
     const metaDescription = descriptions.get('og:description') || descriptions.get('description') || descriptions.get('twitter:description') || '';
-    return { url, summary: extractiveSummary([metaDescription], title) };
+    return { url, summary: extractiveSummary([metaDescription], title), articleText: metaDescription };
   } catch (error) {
     console.warn('Could not extract article body: ' + error.message);
     return {};
@@ -331,7 +332,7 @@ async function fetchReaderArticle(articleUrl, title) {
     const paragraphs = text.split(/\n+/)
       .map((line) => clean(line.replace(/^#{1,6}\s*/, '')))
       .filter((line) => line.length >= 45 && !/^(title|url source|published time|markdown content|source):/i.test(line));
-    return { url: sourceUrl, summary: extractiveSummary(paragraphs, title) };
+    return { url: sourceUrl, summary: extractiveSummary(paragraphs, title), articleText: paragraphs.slice(0, 16).join('\n').slice(0, 14000) };
   } catch (error) {
     console.warn('Reader extraction failed: ' + error.message);
     return {};
@@ -368,6 +369,36 @@ function extractiveSummary(paragraphs, title) {
   const normalizedTitle = clean(title).toLowerCase().replace(/[^a-z0-9\u3400-\u9fff]/g, '');
   if (normalizedSummary === normalizedTitle || normalizedSummary.length < 180) return '';
   return summary;
+}
+
+async function summarizeArticle(sourceText, title) {
+  const articleText = clean(sourceText).slice(0, 14000);
+  if (articleText.length < 300 || !process.env.OPENAI_API_KEY) return '';
+  try {
+    const response = await fetch('https://api.openai.com/v1/responses', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${process.env.OPENAI_API_KEY}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model: process.env.OPENAI_SUMMARY_MODEL || 'gpt-4.1-mini',
+        max_output_tokens: 260,
+        input: [
+          { role: 'system', content: '你是严谨的医学新闻编辑。仅依据给定原文写中文核心简介，通常用2到3句、约100至180个汉字说明研究/报道做了什么、主要发现或影响、重要限制。区分动物/细胞实验与人体证据，不夸大因果，不给个体诊疗建议；原文没有的信息不要补充。只返回简介正文。' },
+          { role: 'user', content: `标题：${title}\n\n原文内容：\n${articleText}` },
+        ],
+      }),
+      signal: AbortSignal.timeout(30000),
+    });
+    if (!response.ok) {
+      console.warn(`AI summary returned HTTP ${response.status}`);
+      return '';
+    }
+    const result = await response.json();
+    const text = result.output_text || (result.output || []).flatMap((item) => item.content || []).filter((item) => item.type === 'output_text').map((item) => item.text).join('');
+    return clean(text);
+  } catch (error) {
+    console.warn('AI summary unavailable: ' + error.message);
+    return '';
+  }
 }
 
 function editorialSummary(title = '') {
