@@ -189,8 +189,24 @@ async function fetchGoogleNews() {
         const topic = /(diabet|prediabet|blood sugar|blood glucose|glucose|insulin|glyc[ae]mi|glycation|sugar|inflamm|cytokin)/i;
         if (!title || !link || !topic.test(title)) continue;
         let domain = sourceName || 'Google News';
-        try { if (sourceUrl) domain = new URL(sourceUrl).hostname.replace(/^www\./, ''); } catch {}
-        articles.push({ title, url: link, domain, language: 'English', seendate: published, rssDescription: readTag('description') });
+        let articleUrl = link;
+        try {
+          if (sourceUrl) {
+            const sourceHost = new URL(sourceUrl).hostname.replace(/^www\./, '');
+            domain = sourceHost;
+            const decodedItem = decode(item);
+            const publisherLink = [...decodedItem.matchAll(/href=["']([^"']+)["']/gi)]
+              .map((entry) => decode(entry[1]))
+              .find((href) => {
+                try {
+                  const candidate = new URL(href, link);
+                  return candidate.hostname.replace(/^www\./, '').endsWith(sourceHost) && candidate.pathname.length > 1;
+                } catch { return false; }
+              });
+            if (publisherLink) articleUrl = new URL(publisherLink, link).href;
+          }
+        } catch {}
+        articles.push({ title, url: articleUrl, domain, language: 'English', seendate: published, rssDescription: readTag('description') });
       }
       await delay(250);
     } catch (error) {
