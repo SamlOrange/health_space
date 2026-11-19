@@ -47,11 +47,12 @@ const candidates = (payload.articles || []).filter((article) => {
   if (!key || seen.has(key)) return false;
   seen.add(key);
   return true;
-}).slice(0, 20);
-if (!candidates.length) throw new Error('GDELT returned no diabetes, blood sugar, or inflammation news; refusing to publish an empty snapshot.');
+}).slice(0, 60);
+if (!candidates.length) throw new Error('News sources returned no relevant candidates; refusing to publish an empty snapshot.');
 
 const articles = [];
-for (const [index, article] of candidates.entries()) {
+for (const article of candidates) {
+  if (articles.length >= 20) break;
   const originalTitle = clean(article.title || 'Untitled health news');
   let articleContent = article.url ? await fetchArticleContent(article.url, originalTitle, article.domain) : {};
   if (!articleContent.summary && article.url) {
@@ -64,18 +65,22 @@ for (const [index, article] of candidates.entries()) {
   const summarySource = selectSummary(description);
   const translatedSummary = summarySource ? await translate(summarySource, article.language) : '';
   const fallbackSummary = editorialSummary(originalTitle);
-  const summaryZh = previous?.summaryReviewed === true && isUsefulSummary(previous.summaryZh) ? previous.summaryZh : fallbackSummary || (isUsefulSummary(translatedSummary, titleZh) ? translatedSummary : isUsefulSummary(previous?.summaryZh, titleZh) ? previous.summaryZh : '原文未提供可用简介；请点击原文查看详情。');
+  const summaryZh = previous?.summaryReviewed === true && isSubstantiveSummary(previous.summaryZh) ? previous.summaryZh : fallbackSummary || (isSubstantiveSummary(translatedSummary) ? translatedSummary : isSubstantiveSummary(previous?.summaryZh) ? previous.summaryZh : '');
+  if (!summaryZh) {
+    console.warn(`Skipping story without a substantive article summary: ${originalTitle}`);
+    continue;
+  }
   articles.push({
-    id: index + 1,
+    id: articles.length + 1,
     title: originalTitle,
     titleZh: titleZh || originalTitle,
     category: classifyCategory(`${originalTitle} ${description}`),
     creator: article.domain || article.sourcecountry || '新闻来源',
     age: formatAge(article.seendate),
-    emoji: ['🌍', '🧬', '🩺', '🧪', '💉'][index % 5],
+    emoji: ['🌍', '🧬', '🩺', '🧪', '💉'][articles.length % 5],
     summary: `来源：${article.domain || article.sourcecountry || '国际媒体'} · ${article.language || '多语种新闻'}`,
     summaryZh,
-    summaryReviewed: previous?.summaryReviewed === true || Boolean(fallbackSummary),
+    summaryReviewed: previous?.summaryReviewed === true && isSubstantiveSummary(previous.summaryZh),
     url: articleContent.url || article.url || null,
     image: article.socialimage || null,
     language: article.language || '',
@@ -92,6 +97,13 @@ const snapshot = {
     notice: `每日更新近7天全球控糖、糖尿病、抗炎与代谢健康报道；中文标题与摘要经机器翻译整理，内容以原文为准，不构成医疗建议。${feed === 'gdelt' ? '按 GDELT 趋势/相关度排序。' : '按报道时间整理。'}`,
   },
 };
+if (articles.length < 20) {
+  const previous = previousSnapshot;
+  previous.meta = { ...previous.meta, lastCheckedAt: new Date().toISOString(), summaryNotice: `本次只找到 ${articles.length} 条包含足够正文、可提炼核心内容的报道；为避免发布空泛简介，保留上次完整榜单。` };
+  await fs.writeFile(snapshotPath, JSON.stringify(previous, null, 2));
+  console.warn(`Only ${articles.length}/20 stories had substantive summaries; keeping previous complete snapshot.`);
+  process.exit(0);
+}
 await fs.writeFile(snapshotPath, JSON.stringify(snapshot, null, 2));
 console.log(`Saved ${articles.length} diabetes, blood sugar, and inflammation stories with Chinese titles and summaries.`);
 
@@ -347,14 +359,14 @@ function extractiveSummary(paragraphs, title) {
   const selected = sentences.sort((a, b) => b.score - a.score).slice(0, 3).sort((a, b) => a.paragraphIndex - b.paragraphIndex || a.sentenceIndex - b.sentenceIndex);
   if (selected.length < 2) return '';
   let summary = selected.map((item) => item.sentence).join(' ');
-  if (summary.length > 220) {
-    summary = summary.slice(0, 220).replace(/\s+\S*$/, '').trim();
+  if (summary.length > 520) {
+    summary = summary.slice(0, 520).replace(/\s+\S*$/, '').trim();
     const lastBoundary = Math.max(summary.lastIndexOf('.'), summary.lastIndexOf('!'), summary.lastIndexOf('?'));
     if (lastBoundary > 80) summary = summary.slice(0, lastBoundary + 1);
   }
   const normalizedSummary = summary.toLowerCase().replace(/[^a-z0-9\u3400-\u9fff]/g, '');
   const normalizedTitle = clean(title).toLowerCase().replace(/[^a-z0-9\u3400-\u9fff]/g, '');
-  if (normalizedSummary === normalizedTitle || normalizedSummary.length < 100) return '';
+  if (normalizedSummary === normalizedTitle || normalizedSummary.length < 180) return '';
   return summary;
 }
 
@@ -383,6 +395,13 @@ function scoreParagraph(text, terms) {
   const lower = text.toLowerCase();
   return terms.reduce((score, term) => score + (lower.includes(term) ? 1 : 0), 0);
 }
+function isSubstantiveSummary(value) {
+  if (!value || /原文未提供可用简介|请点击原文查看详情|source:|news coverage.*aggregated by google/i.test(value)) return false;
+  const length = [...value].filter((char) => /[\u3400-\u9fffA-Za-z0-9]/.test(char)).length;
+  const clauses = (value.match(/[。！？.!?；;]/g) || []).length;
+  return length >= 70 && clauses >= 2;
+}
+
 function isUsefulSummary(value, title = '') {
   if (!value || /comprehensive latest news|latest news coverage.*aggregated by google|news coverage.*from around the world|由\s*Google\s*新闻从世界各地|由\s*Google\s*新闻从世界各地/i.test(value)) return false;
   const compact = value.toLowerCase().replace(/[^\u3400-\u9fffA-Za-z0-9]/g, '');
@@ -398,7 +417,7 @@ async function translate(text, languageName) {
   const source = langCode(languageName);
   try {
     const url = new URL('https://api.mymemory.translated.net/get');
-    url.searchParams.set('q', text.slice(0, 220));
+    url.searchParams.set('q', text.slice(0, 500));
     url.searchParams.set('langpair', `${source}|zh-CN`);
     const response = await fetch(url, { signal: AbortSignal.timeout(12000) });
     if (!response.ok) return '';
