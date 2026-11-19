@@ -48,8 +48,9 @@ if (!candidates.length) throw new Error('GDELT returned no diabetes, blood sugar
 const articles = [];
 for (const [index, article] of candidates.entries()) {
   const originalTitle = clean(article.title || 'Untitled health news');
-  const description = article.rssDescription || (feed === 'gdelt' && article.url ? await fetchDescription(article.url, originalTitle) : '');
-  const previous = previousByUrl.get(article.url);
+  const articleContent = article.url ? await fetchArticleContent(article.url, originalTitle, article.domain) : {};
+  const description = articleContent.summary || article.rssDescription || '';
+  const previous = previousByUrl.get(articleContent.url) || previousByUrl.get(article.url);
   const titleZh = await translate(originalTitle, article.language) || previous?.titleZh || originalTitle;
   const summarySource = selectSummary(description);
   const translatedSummary = summarySource ? await translate(summarySource, article.language) : '';
@@ -66,7 +67,7 @@ for (const [index, article] of candidates.entries()) {
     summary: `来源：${article.domain || article.sourcecountry || '国际媒体'} · ${article.language || '多语种新闻'}`,
     summaryZh,
     summaryReviewed: previous?.summaryReviewed === true || Boolean(fallbackSummary),
-    url: article.url || null,
+    url: articleContent.url || article.url || null,
     image: article.socialimage || null,
     language: article.language || '',
   });
@@ -140,34 +141,114 @@ async function fetchGoogleNews() {
   }).sort((a, b) => new Date(b.seendate).getTime() - new Date(a.seendate).getTime()) };
 }
 
-async function fetchDescription(url, title) {
+async function fetchArticleContent(articleUrl, title, sourceDomain = '') {
   try {
-    const response = await fetch(url, {
-      headers: { 'User-Agent': 'Mozilla/5.0 (compatible; HealthPulseNews/1.0)', Accept: 'text/html' },
-      signal: AbortSignal.timeout(8000),
+    const response = await fetch(articleUrl, {
+      headers: { 'User-Agent': 'Mozilla/5.0 (compatible; HealthPulseNews/1.0)', Accept: 'text/html,application/xhtml+xml' },
+      signal: AbortSignal.timeout(12000),
+      redirect: 'follow',
     });
-    if (!response.ok) return '';
-    const html = await response.text();
+    if (!response.ok) return {};
+    let url = response.url || articleUrl;
+    let html = await response.text();
+    let sourceHost = '';
+    try { sourceHost = new URL(sourceDomain.startsWith('http') ? sourceDomain : 'https://' + sourceDomain).hostname.replace(/^www\./, ''); } catch {}
+
+    const canonical = html.match(/<link\b[^>]*rel=["']canonical["'][^>]*href=["']([^"']+)["']/i)?.[1]
+      || html.match(/<link\b[^>]*href=["']([^"']+)["'][^>]*rel=["']canonical["']/i)?.[1];
+    const ogUrl = html.match(/<meta\b[^>]*property=["']og:url["'][^>]*content=["']([^"']+)["']/i)?.[1];
+    for (const candidate of [canonical, ogUrl]) {
+      if (!candidate) continue;
+      try {
+        const candidateUrl = new URL(decode(candidate), url);
+        if (!/google\\./i.test(candidateUrl.hostname)) { url = candidateUrl.href; break; }
+      } catch {}
+    }
+
+    if (/news\\.google\\./i.test(new URL(url).hostname) && sourceHost) {
+      const links = [...html.matchAll(/href=["']([^"']+)["']/gi)].map((match) => decode(match[1]));
+      const publisherLink = links.find((href) => {
+        try { return new URL(href, url).hostname.replace(/^www\\./, '').endsWith(sourceHost); } catch { return false; }
+      });
+      if (publisherLink) {
+        const publisherUrl = new URL(publisherLink, url).href;
+        const publisherResponse = await fetch(publisherUrl, {
+          headers: { 'User-Agent': 'Mozilla/5.0 (compatible; HealthPulseNews/1.0)', Accept: 'text/html,application/xhtml+xml' },
+          signal: AbortSignal.timeout(10000),
+          redirect: 'follow',
+        });
+        if (publisherResponse.ok) {
+          url = publisherResponse.url || publisherUrl;
+          html = await publisherResponse.text();
+        }
+      }
+    }
+
+    const paragraphs = [...html.matchAll(/<p\\b[^>]*>([\\s\\S]*?)<\\/p>/gi)]
+      .map((match) => clean(match[1]))
+      .filter((text) => text.length >= 55 && text.length <= 1800 && !/subscribe|newsletter|sign up|read more|click here|cookie policy|all rights reserved/i.test(text));
+
+    for (const match of html.matchAll(/<script\\b[^>]*type=["']application\\/ld\\+json["'][^>]*>([\\s\\S]*?)<\\/script>/gi)) {
+      try {
+        const data = JSON.parse(match[1]);
+        const collect = (value) => {
+          if (!value || typeof value !== 'object') return;
+          if (typeof value.articleBody === 'string' && value.articleBody.length > 200) paragraphs.unshift(clean(value.articleBody));
+          if (Array.isArray(value)) value.forEach(collect);
+          else Object.values(value).forEach(collect);
+        };
+        collect(data);
+      } catch {}
+    }
+
+    const bodySummary = extractiveSummary(paragraphs, title);
+    if (bodySummary) return { url, summary: bodySummary };
+
     const descriptions = new Map();
-    for (const match of html.matchAll(/<meta\b[^>]*>/gi)) {
+    for (const match of html.matchAll(/<meta\\b[^>]*>/gi)) {
       const tag = match[0];
-      const attrs = Object.fromEntries([...tag.matchAll(/([\w:-]+)\s*=\s*["']([^"']*)["']/g)].map((m) => [m[1].toLowerCase(), decode(m[2])]));
+      const attrs = Object.fromEntries([...tag.matchAll(/([\\w:-]+)\\s*=\\s*["']([^"']*)["']/g)].map((m) => [m[1].toLowerCase(), decode(m[2])]));
       const key = (attrs.property || attrs.name || attrs.itemprop || '').toLowerCase();
       if (['og:description', 'description', 'twitter:description'].includes(key) && attrs.content) descriptions.set(key, attrs.content);
     }
     const metaDescription = descriptions.get('og:description') || descriptions.get('description') || descriptions.get('twitter:description') || '';
-    if (metaDescription.length >= 90) return metaDescription;
-    const body = [...html.matchAll(/<p\b[^>]*>([\s\S]*?)<\/p>/gi)]
-      .map((match) => clean(match[1]))
-      .filter((text) => text.length >= 90 && text.length <= 2000 && text.split(/\s+/).length >= 14)
-      .filter((text) => !/subscribe|newsletter|sign up|read more|click here|cookie policy/i.test(text));
-    const titleTerms = clean(title).toLowerCase().split(/[^a-z0-9]+/).filter((word) => word.length > 4);
-    body.sort((a, b) => scoreParagraph(b, titleTerms) - scoreParagraph(a, titleTerms));
-    return body[0] || metaDescription;
+    return { url, summary: extractiveSummary([metaDescription], title) };
   } catch (error) {
-    console.warn(`Could not read article description: ${error.message}`);
-    return '';
+    console.warn('Could not extract article body: ' + error.message);
+    return {};
   }
+}
+
+function extractiveSummary(paragraphs, title) {
+  const titleTerms = clean(title).toLowerCase().split(/[^a-z0-9\\u3400-\\u9fff]+/).filter((word) => word.length > 3);
+  const sentences = [];
+  for (const [paragraphIndex, paragraph] of paragraphs.entries()) {
+    const cleaned = clean(paragraph);
+    if (!cleaned) continue;
+    const parts = cleaned.match(/[^.!?。！？]+[.!?。！？]?/g) || [cleaned];
+    for (const [sentenceIndex, part] of parts.entries()) {
+      const sentence = part.trim();
+      if (sentence.length < 45 || sentence.length > 420) continue;
+      if (/subscribe|newsletter|sign up|read more|click here|cookie policy|all rights reserved|privacy policy/i.test(sentence)) continue;
+      const lower = sentence.toLowerCase();
+      const overlap = titleTerms.reduce((score, term) => score + (lower.includes(term) ? 2 : 0), 0);
+      const factual = /\\d|%|percent|study|research|trial|found|showed|reported|according|compared|increased|reduced|risk|patient|participant|mouse|mice|treatment|blood|glucose|diabetes|inflamm/i.test(sentence) ? 2 : 0;
+      const position = paragraphIndex === 0 ? 2 : paragraphIndex < 3 ? 1 : 0;
+      sentences.push({ sentence, score: overlap + factual + position - sentenceIndex * 0.1, paragraphIndex, sentenceIndex });
+    }
+  }
+  const selected = sentences.sort((a, b) => b.score - a.score).slice(0, 3).sort((a, b) => a.paragraphIndex - b.paragraphIndex || a.sentenceIndex - b.sentenceIndex);
+  if (selected.length < 2) return '';
+  let summary = selected.map((item) => item.sentence).join(' ');
+  if (summary.length > 220) {
+    summary = summary.slice(0, 220).replace(/\\s+\\S*$/, '').trim();
+    const lastBoundary = Math.max(summary.lastIndexOf('.'), summary.lastIndexOf('!'), summary.lastIndexOf('?'));
+    if (lastBoundary > 80) summary = summary.slice(0, lastBoundary + 1);
+  }
+  const normalizedSummary = summary.toLowerCase().replace(/[^a-z0-9\\u3400-\\u9fff]/g, '');
+  const normalizedTitle = clean(title).toLowerCase().replace(/[^a-z0-9\\u3400-\\u9fff]/g, '');
+  if (normalizedSummary === normalizedTitle || normalizedSummary.length < 100) return '';
+  return summary;
 }
 
 function editorialSummary(title = '') {
