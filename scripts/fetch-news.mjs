@@ -161,14 +161,14 @@ async function fetchArticleContent(articleUrl, title, sourceDomain = '') {
       if (!candidate) continue;
       try {
         const candidateUrl = new URL(decode(candidate), url);
-        if (!/google\\./i.test(candidateUrl.hostname)) { url = candidateUrl.href; break; }
+        if (!/google\./i.test(candidateUrl.hostname)) { url = candidateUrl.href; break; }
       } catch {}
     }
 
-    if (/news\\.google\\./i.test(new URL(url).hostname) && sourceHost) {
+    if (/news\.google\./i.test(new URL(url).hostname) && sourceHost) {
       const links = [...html.matchAll(/href=["']([^"']+)["']/gi)].map((match) => decode(match[1]));
       const publisherLink = links.find((href) => {
-        try { return new URL(href, url).hostname.replace(/^www\\./, '').endsWith(sourceHost); } catch { return false; }
+        try { return new URL(href, url).hostname.replace(/^www\./, '').endsWith(sourceHost); } catch { return false; }
       });
       if (publisherLink) {
         const publisherUrl = new URL(publisherLink, url).href;
@@ -184,11 +184,11 @@ async function fetchArticleContent(articleUrl, title, sourceDomain = '') {
       }
     }
 
-    const paragraphs = [...html.matchAll(/<p\\b[^>]*>([\\s\\S]*?)<\\/p>/gi)]
+    const paragraphs = [...html.matchAll(/<p\b[^>]*>([\s\S]*?)<\/p>/gi)]
       .map((match) => clean(match[1]))
       .filter((text) => text.length >= 55 && text.length <= 1800 && !/subscribe|newsletter|sign up|read more|click here|cookie policy|all rights reserved/i.test(text));
 
-    for (const match of html.matchAll(/<script\\b[^>]*type=["']application\\/ld\\+json["'][^>]*>([\\s\\S]*?)<\\/script>/gi)) {
+    for (const match of html.matchAll(/<script\b[^>]*type=["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/gi)) {
       try {
         const data = JSON.parse(match[1]);
         const collect = (value) => {
@@ -205,9 +205,9 @@ async function fetchArticleContent(articleUrl, title, sourceDomain = '') {
     if (bodySummary) return { url, summary: bodySummary };
 
     const descriptions = new Map();
-    for (const match of html.matchAll(/<meta\\b[^>]*>/gi)) {
+    for (const match of html.matchAll(/<meta\b[^>]*>/gi)) {
       const tag = match[0];
-      const attrs = Object.fromEntries([...tag.matchAll(/([\\w:-]+)\\s*=\\s*["']([^"']*)["']/g)].map((m) => [m[1].toLowerCase(), decode(m[2])]));
+      const attrs = Object.fromEntries([...tag.matchAll(/([\w:-]+)\s*=\s*["']([^"']*)["']/g)].map((m) => [m[1].toLowerCase(), decode(m[2])]));
       const key = (attrs.property || attrs.name || attrs.itemprop || '').toLowerCase();
       if (['og:description', 'description', 'twitter:description'].includes(key) && attrs.content) descriptions.set(key, attrs.content);
     }
@@ -220,7 +220,7 @@ async function fetchArticleContent(articleUrl, title, sourceDomain = '') {
 }
 
 function extractiveSummary(paragraphs, title) {
-  const titleTerms = clean(title).toLowerCase().split(/[^a-z0-9\\u3400-\\u9fff]+/).filter((word) => word.length > 3);
+  const titleTerms = clean(title).toLowerCase().split(/[^a-z0-9\u3400-\u9fff]+/).filter((word) => word.length > 3);
   const sentences = [];
   for (const [paragraphIndex, paragraph] of paragraphs.entries()) {
     const cleaned = clean(paragraph);
@@ -232,7 +232,7 @@ function extractiveSummary(paragraphs, title) {
       if (/subscribe|newsletter|sign up|read more|click here|cookie policy|all rights reserved|privacy policy/i.test(sentence)) continue;
       const lower = sentence.toLowerCase();
       const overlap = titleTerms.reduce((score, term) => score + (lower.includes(term) ? 2 : 0), 0);
-      const factual = /\\d|%|percent|study|research|trial|found|showed|reported|according|compared|increased|reduced|risk|patient|participant|mouse|mice|treatment|blood|glucose|diabetes|inflamm/i.test(sentence) ? 2 : 0;
+      const factual = /\d|%|percent|study|research|trial|found|showed|reported|according|compared|increased|reduced|risk|patient|participant|mouse|mice|treatment|blood|glucose|diabetes|inflamm/i.test(sentence) ? 2 : 0;
       const position = paragraphIndex === 0 ? 2 : paragraphIndex < 3 ? 1 : 0;
       sentences.push({ sentence, score: overlap + factual + position - sentenceIndex * 0.1, paragraphIndex, sentenceIndex });
     }
@@ -241,12 +241,12 @@ function extractiveSummary(paragraphs, title) {
   if (selected.length < 2) return '';
   let summary = selected.map((item) => item.sentence).join(' ');
   if (summary.length > 220) {
-    summary = summary.slice(0, 220).replace(/\\s+\\S*$/, '').trim();
+    summary = summary.slice(0, 220).replace(/\s+\S*$/, '').trim();
     const lastBoundary = Math.max(summary.lastIndexOf('.'), summary.lastIndexOf('!'), summary.lastIndexOf('?'));
     if (lastBoundary > 80) summary = summary.slice(0, lastBoundary + 1);
   }
-  const normalizedSummary = summary.toLowerCase().replace(/[^a-z0-9\\u3400-\\u9fff]/g, '');
-  const normalizedTitle = clean(title).toLowerCase().replace(/[^a-z0-9\\u3400-\\u9fff]/g, '');
+  const normalizedSummary = summary.toLowerCase().replace(/[^a-z0-9\u3400-\u9fff]/g, '');
+  const normalizedTitle = clean(title).toLowerCase().replace(/[^a-z0-9\u3400-\u9fff]/g, '');
   if (normalizedSummary === normalizedTitle || normalizedSummary.length < 100) return '';
   return summary;
 }
@@ -266,8 +266,11 @@ function classifyCategory(text = '') {
 function selectSummary(text) {
   const normalized = clean(text);
   if (!normalized) return '';
-  const shortened = normalized.slice(0, 170);
-  return shortened.length < normalized.length ? shortened.replace(/\s+\S*$/, '').trim() : shortened;
+  if (normalized.length <= 220) return normalized;
+  let shortened = normalized.slice(0, 220);
+  const boundary = Math.max(shortened.lastIndexOf('.'), shortened.lastIndexOf('!'), shortened.lastIndexOf('?'), shortened.lastIndexOf('。'), shortened.lastIndexOf('！'), shortened.lastIndexOf('？'));
+  if (boundary > 100) return shortened.slice(0, boundary + 1).trim();
+  return shortened.replace(/\s+\S*$/, '').trim();
 }
 function scoreParagraph(text, terms) {
   const lower = text.toLowerCase();
