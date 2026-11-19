@@ -23,8 +23,13 @@ for (let attempt = 1; attempt <= 3; attempt++) {
 let feed = 'gdelt';
 if (!payload || !(payload.articles || []).length) {
   console.warn(`GDELT unavailable; trying Google News RSS: ${lastError?.message || 'no matching articles'}`);
-  payload = await fetchGoogleNews();
-  feed = 'google-news-rss';
+  payload = await fetchBingNews();
+  feed = 'bing-news-rss';
+  if (!payload || !(payload.articles || []).length) {
+    console.warn('Bing News RSS returned no stories; trying Google News RSS.');
+    payload = await fetchGoogleNews();
+    feed = 'google-news-rss';
+  }
 }
 if (!payload || !(payload.articles || []).length) {
   const previous = JSON.parse(await fs.readFile(snapshotPath, 'utf8'));
@@ -85,6 +90,62 @@ const snapshot = {
 };
 await fs.writeFile(snapshotPath, JSON.stringify(snapshot, null, 2));
 console.log(`Saved ${articles.length} diabetes, blood sugar, and inflammation stories with Chinese titles and summaries.`);
+
+async function fetchBingNews() {
+  const searches = [
+    'diabetes OR diabetic OR prediabetes OR "blood sugar" OR "blood glucose" OR glucose OR insulin OR glycemic',
+    'inflammation OR inflammatory OR "anti-inflammatory" OR cytokine',
+    'glycation OR "added sugar" OR "sugar intake" OR glycaemic',
+  ];
+  const articles = [];
+  for (const term of searches) {
+    try {
+      const url = new URL('https://www.bing.com/news/search');
+      url.searchParams.set('q', term);
+      url.searchParams.set('format', 'rss');
+      url.searchParams.set('freshness', 'Week');
+      const response = await fetch(url, { headers: { 'User-Agent': 'Mozilla/5.0 (compatible; HealthPulseNews/1.0)', Accept: 'application/rss+xml,application/xml,text/xml' }, signal: AbortSignal.timeout(20000) });
+      if (!response.ok) throw new Error('Bing News RSS returned HTTP ' + response.status);
+      const xml = await response.text();
+      for (const match of xml.matchAll(/<item\b[^>]*>([\s\S]*?)<\/item>/gi)) {
+        const item = match[1];
+        const readTag = (name) => {
+          const found = item.match(new RegExp('<' + name + '\\b[^>]*>([\\s\\S]*?)</' + name + '>', 'i'));
+          return found ? clean(found[1].replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g, '$1')) : '';
+        };
+        const title = readTag('title');
+        const link = readTag('link');
+        const published = readTag('pubDate');
+        const description = readTag('description');
+        const topic = /(diabet|prediabet|blood sugar|blood glucose|glucose|insulin|glyc[ae]mi|glycation|sugar|inflamm|cytokin)/i;
+        if (!title || !link || !topic.test(title + ' ' + description)) continue;
+        const sourceTag = item.match(/<source\b([^>]*)>([\s\S]*?)<\/source>/i);
+        const sourceName = sourceTag ? clean(sourceTag[2]) : '';
+        let articleUrl = link;
+        try {
+          const linkUrl = new URL(link);
+          for (const key of ['url', 'u', 'r']) {
+            const candidate = linkUrl.searchParams.get(key);
+            if (candidate && /^https?:\/\//i.test(candidate)) { articleUrl = candidate; break; }
+          }
+        } catch {}
+        let domain = sourceName || 'Bing News';
+        try { domain = new URL(articleUrl).hostname.replace(/^www\./, ''); } catch {}
+        articles.push({ title, url: articleUrl, domain, language: 'English', seendate: published, rssDescription: description });
+      }
+      await delay(250);
+    } catch (error) {
+      console.warn('Bing News RSS query failed: ' + error.message);
+    }
+  }
+  const seen = new Set();
+  return { articles: articles.filter((article) => {
+    const key = article.title.toLowerCase().replace(/[^a-z0-9]/g, '').slice(0, 70);
+    if (!key || seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  }).sort((a, b) => new Date(b.seendate).getTime() - new Date(a.seendate).getTime()) };
+}
 
 async function fetchGoogleNews() {
   const searches = [
