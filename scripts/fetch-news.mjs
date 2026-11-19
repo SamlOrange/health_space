@@ -299,9 +299,9 @@ async function fetchReaderArticle(articleUrl, title) {
       return {};
     }
     const text = await response.text();
-    const sourceUrl = text.match(/^URL Source:\\s*(https?:\\/\\/\\S+)/mi)?.[1] || articleUrl;
-    const paragraphs = text.split(/\\n+/)
-      .map((line) => clean(line.replace(/^#{1,6}\\s*/, '')))
+    const sourceUrl = text.match(/^URL Source:\s*(https?:\/\/\S+)/mi)?.[1] || articleUrl;
+    const paragraphs = text.split(/\n+/)
+      .map((line) => clean(line.replace(/^#{1,6}\s*/, '')))
       .filter((line) => line.length >= 45 && !/^(title|url source|published time|markdown content|source):/i.test(line));
     return { url: sourceUrl, summary: extractiveSummary(paragraphs, title) };
   } catch (error) {
