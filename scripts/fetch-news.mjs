@@ -53,7 +53,11 @@ if (!candidates.length) throw new Error('GDELT returned no diabetes, blood sugar
 const articles = [];
 for (const [index, article] of candidates.entries()) {
   const originalTitle = clean(article.title || 'Untitled health news');
-  const articleContent = article.url ? await fetchArticleContent(article.url, originalTitle, article.domain) : {};
+  let articleContent = article.url ? await fetchArticleContent(article.url, originalTitle, article.domain) : {};
+  if (!articleContent.summary && article.url) {
+    const readerContent = await fetchReaderArticle(article.url, originalTitle);
+    if (readerContent.summary) articleContent = { ...articleContent, ...readerContent };
+  }
   const description = articleContent.summary || article.rssDescription || '';
   const previous = previousByUrl.get(articleContent.url) || previousByUrl.get(article.url);
   const titleZh = await translate(originalTitle, article.language) || previous?.titleZh || originalTitle;
@@ -276,6 +280,32 @@ async function fetchArticleContent(articleUrl, title, sourceDomain = '') {
     return { url, summary: extractiveSummary([metaDescription], title) };
   } catch (error) {
     console.warn('Could not extract article body: ' + error.message);
+    return {};
+  }
+}
+
+async function fetchReaderArticle(articleUrl, title) {
+  try {
+    const endpoint = new URL('https://r.jina.ai/');
+    endpoint.searchParams.set('url', articleUrl);
+    endpoint.searchParams.set('respondWith', 'text');
+    endpoint.searchParams.set('timeout', '20');
+    const response = await fetch(endpoint, {
+      headers: { Accept: 'text/plain', 'X-Timeout': '20', 'X-Token-Budget': '5000' },
+      signal: AbortSignal.timeout(30000),
+    });
+    if (!response.ok) {
+      console.warn('Reader extraction returned HTTP ' + response.status);
+      return {};
+    }
+    const text = await response.text();
+    const sourceUrl = text.match(/^URL Source:\\s*(https?:\\/\\/\\S+)/mi)?.[1] || articleUrl;
+    const paragraphs = text.split(/\\n+/)
+      .map((line) => clean(line.replace(/^#{1,6}\\s*/, '')))
+      .filter((line) => line.length >= 45 && !/^(title|url source|published time|markdown content|source):/i.test(line));
+    return { url: sourceUrl, summary: extractiveSummary(paragraphs, title) };
+  } catch (error) {
+    console.warn('Reader extraction failed: ' + error.message);
     return {};
   }
 }
