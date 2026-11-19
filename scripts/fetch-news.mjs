@@ -416,9 +416,9 @@ function editorialSummary(title = '') {
 
 function classifyCategory(text = '') {
   const value = text.toLowerCase();
-  if (/diabet|prediabet|\bglucose\b|\bglycemic\b|\bglycaemic\b|\binsulin\b|blood sugar|blood glucose/.test(value)) return '糖尿病与血糖';
   if (/insulin resistance/.test(value)) return '胰岛素抵抗';
   if (/prediabet/.test(value)) return '糖尿病前期';
+  if (/diabet|\bglucose\b|\bglycemic\b|\bglycaemic\b|\binsulin\b|blood sugar|blood glucose/.test(value)) return '糖尿病与血糖';
   if (/blood sugar|blood glucose|glucose|glyc[ae]mi|hba1c|\ba1c\b/.test(value)) return '血糖管理';
   return '控糖与代谢';
 }
