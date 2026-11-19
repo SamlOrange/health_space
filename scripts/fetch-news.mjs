@@ -1,7 +1,7 @@
 import fs from 'node:fs/promises';
 
 const snapshotPath = new URL('../public/videos.json', import.meta.url);
-const query = '(diabetes OR diabetic OR prediabetes OR "blood sugar" OR "blood glucose" OR glycemic OR glycaemic OR glucose OR insulin OR "insulin resistance" OR glycation OR glycosylation OR "added sugar" OR "sugar reduction" OR "sugar intake" OR "sugar-sweetened beverages" OR "glycemic control" OR inflammation OR inflammatory OR "anti-inflammatory" OR "anti inflammatory" OR cytokine OR metabolic)';
+const query = '(diabetes OR diabetic OR prediabetes OR "blood sugar" OR "blood glucose" OR glycemic OR glycaemic OR glucose OR insulin OR "insulin resistance" OR "insulin sensitivity" OR "insulin response" OR HbA1c OR A1C OR "glycemic control" OR "glucose control" OR "metabolic syndrome" OR "sugar reduction" OR "sugar intake")';
 const params = new URLSearchParams({ query, mode: 'ArtList', format: 'json', maxrecords: '250', timespan: '7d', sort: 'HybridRel' });
 let payload;
 let lastError;
@@ -103,7 +103,7 @@ const snapshot = {
   meta: {
     source: feed,
     updatedAt: new Date().toISOString(),
-    notice: `每日更新近7天全球控糖、糖尿病、抗炎与代谢健康报道；中文标题与可获取的新闻简介经机器翻译整理，内容以原文为准，不构成医疗建议。${feed === 'gdelt' ? '按 GDELT 趋势/相关度排序。' : '按报道时间整理。'}`,
+    notice: `每日更新近7天全球控糖、胰岛素抵抗、血糖管理与糖尿病报道；中文标题与可获取的新闻简介经机器翻译整理，内容以原文为准，不构成医疗建议。${feed === 'gdelt' ? '按 GDELT 趋势/相关度排序。' : '按报道时间整理。'}`,
   },
 };
 if (process.env.OPENAI_API_KEY && articles.length < 20) {
@@ -118,9 +118,9 @@ console.log(`Saved ${articles.length} diabetes, blood sugar, and inflammation st
 
 async function fetchBingNews() {
   const searches = [
-    'diabetes OR diabetic OR prediabetes OR "blood sugar" OR "blood glucose" OR glucose OR insulin OR glycemic',
-    'inflammation OR inflammatory OR "anti-inflammatory" OR cytokine',
-    'glycation OR "added sugar" OR "sugar intake" OR glycaemic',
+    'diabetes OR diabetic OR prediabetes OR "blood sugar" OR "blood glucose" OR glucose OR insulin',
+    '"insulin resistance" OR "insulin sensitivity" OR HbA1c OR A1C OR glycemic OR glycaemic',
+    '"glucose control" OR "glycemic control" OR "metabolic syndrome" OR "sugar intake"',
   ];
   const articles = [];
   for (const term of searches) {
@@ -142,7 +142,7 @@ async function fetchBingNews() {
         const link = readTag('link');
         const published = readTag('pubDate');
         const description = readTag('description');
-        const topic = /(diabet|prediabet|blood sugar|blood glucose|glucose|insulin|glyc[ae]mi|glycation|sugar|inflamm|cytokin)/i;
+        const topic = /(diabet|prediabet|blood sugar|blood glucose|glucose|insulin|glyc[ae]mi|hba1c|\ba1c\b|metabolic syndrome|sugar)/i;
         if (!title || !link || !topic.test(title + ' ' + description)) continue;
         const sourceTag = item.match(/<source\b([^>]*)>([\s\S]*?)<\/source>/i);
         const sourceName = sourceTag ? clean(sourceTag[2]) : '';
@@ -175,8 +175,8 @@ async function fetchBingNews() {
 async function fetchGoogleNews() {
   const searches = [
     'diabetes OR diabetic OR prediabetes OR "blood sugar" OR "blood glucose" OR glucose OR insulin when:7d',
-    'inflammation OR inflammatory OR "anti-inflammatory" OR cytokine when:7d',
-    'glycation OR "added sugar" OR "sugar intake" OR glycemic OR glycaemic when:7d',
+    '"insulin resistance" OR "insulin sensitivity" OR HbA1c OR A1C when:7d',
+    '"glucose control" OR "glycemic control" OR "metabolic syndrome" OR "sugar intake" when:7d',
   ];
   const articles = [];
   for (const term of searches) {
@@ -417,7 +417,9 @@ function editorialSummary(title = '') {
 function classifyCategory(text = '') {
   const value = text.toLowerCase();
   if (/diabet|prediabet|\bglucose\b|\bglycemic\b|\bglycaemic\b|\binsulin\b|blood sugar|blood glucose/.test(value)) return '糖尿病与血糖';
-  if (/inflamm|cytokine|anti-inflammatory|anti inflammatory/.test(value)) return '炎症研究';
+  if (/insulin resistance/.test(value)) return '胰岛素抵抗';
+  if (/prediabet/.test(value)) return '糖尿病前期';
+  if (/blood sugar|blood glucose|glucose|glyc[ae]mi|hba1c|\ba1c\b/.test(value)) return '血糖管理';
   return '控糖与代谢';
 }
 
