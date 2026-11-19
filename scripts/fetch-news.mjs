@@ -66,7 +66,15 @@ for (const article of candidates) {
   const translatedSummary = summarySource ? await translate(summarySource, article.language) : '';
   const fallbackSummary = editorialSummary(originalTitle);
   const aiSummary = process.env.OPENAI_API_KEY ? await summarizeArticle(articleContent.articleText || description, originalTitle) : '';
-  const summaryZh = previous?.summaryReviewed === true && isSubstantiveSummary(previous.summaryZh) ? previous.summaryZh : fallbackSummary || (isSubstantiveSummary(aiSummary) ? aiSummary : isSubstantiveSummary(translatedSummary) ? translatedSummary : isSubstantiveSummary(previous?.summaryZh) ? previous.summaryZh : '');
+  const summaryZh = previous?.summaryReviewed === true && isUsefulSummary(previous.summaryZh, titleZh)
+    ? previous.summaryZh
+    : fallbackSummary || (isUsefulSummary(aiSummary, titleZh)
+      ? aiSummary
+      : isUsefulSummary(translatedSummary, titleZh)
+        ? translatedSummary
+        : isUsefulSummary(previous?.summaryZh, titleZh)
+          ? previous.summaryZh
+          : '原文未提供可用简介；请点击原文查看详情。');
   if (!summaryZh) {
     console.warn(`Skipping story without a substantive article summary: ${originalTitle}`);
     continue;
@@ -95,10 +103,10 @@ const snapshot = {
   meta: {
     source: feed,
     updatedAt: new Date().toISOString(),
-    notice: `每日更新近7天全球控糖、糖尿病、抗炎与代谢健康报道；中文标题与摘要经机器翻译整理，内容以原文为准，不构成医疗建议。${feed === 'gdelt' ? '按 GDELT 趋势/相关度排序。' : '按报道时间整理。'}`,
+    notice: `每日更新近7天全球控糖、糖尿病、抗炎与代谢健康报道；中文标题与可获取的新闻简介经机器翻译整理，内容以原文为准，不构成医疗建议。${feed === 'gdelt' ? '按 GDELT 趋势/相关度排序。' : '按报道时间整理。'}`,
   },
 };
-if (articles.length < 20) {
+if (process.env.OPENAI_API_KEY && articles.length < 20) {
   const previous = previousSnapshot;
   previous.meta = { ...previous.meta, lastCheckedAt: new Date().toISOString(), summaryNotice: `本次只找到 ${articles.length} 条包含足够正文、可提炼核心内容的报道；为避免发布空泛简介，保留上次完整榜单。` };
   await fs.writeFile(snapshotPath, JSON.stringify(previous, null, 2));
